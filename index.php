@@ -5,19 +5,19 @@
 session_start();
 
 // Change this password before putting the file on a public server.
-$appPassword = "changeme!";
+$editPassword = "password";
 $loginError = null;
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "login") {
     $submittedPassword = $_POST["password"] ?? "";
 
-    if (hash_equals($appPassword, $submittedPassword)) {
-        $_SESSION["fog_authenticated"] = true;
+    if (hash_equals($editPassword, $submittedPassword)) {
+        $_SESSION["fog_edit_authenticated"] = true;
         header("Location: " . $_SERVER["PHP_SELF"]);
         exit;
     }
 
-    $loginError = "Incorrect password.";
+    $loginError = "Incorrect edit password.";
 }
 
 if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "logout") {
@@ -41,7 +41,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "logou
     exit;
 }
 
-$isAuthenticated = !empty($_SESSION["fog_authenticated"]);
+$canEdit = !empty($_SESSION["fog_edit_authenticated"]);
 
 $uploadDir = __DIR__ . "/uploads";
 $uploadUrl = "uploads";
@@ -205,6 +205,7 @@ function saveEditableMapState($renderedDataUrl, $fogDataUrl, $stampsJson, $baseF
 
     $safeStamps = [];
     $allowedColors = ["red", "green", "blue", "white", "black"];
+    $allowedSymbols = ["↑", "↓", "←", "→", "<-->", "↕", "TRAP", "SAFE?", "X", "?"];
 
     foreach ($stamps as $stamp) {
         if (!is_array($stamp)) {
@@ -231,6 +232,11 @@ function saveEditableMapState($renderedDataUrl, $fogDataUrl, $stampsJson, $baseF
         }
 
         $text = mb_substr($text, 0, 8);
+
+        if (!in_array($text, $allowedSymbols, true)) {
+            continue;
+        }
+
         $color = strtolower((string)($stamp["color"] ?? "white"));
 
         if (!in_array($color, $allowedColors, true)) {
@@ -269,13 +275,24 @@ if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0755, true);
 }
 
-if ($isAuthenticated && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "save_revealed_image") {
+$writeActions = ["save_revealed_image", "delete_file", "upload"];
+$requestedAction = $_POST["action"] ?? "";
+
+if (!$canEdit && $_SERVER["REQUEST_METHOD"] === "POST" && in_array($requestedAction, $writeActions, true)) {
+    if ($requestedAction === "save_revealed_image") {
+        sendJsonResponse(["ok" => false, "error" => "Edit password required."], 403);
+    }
+
+    $error = "Edit password required.";
+}
+
+if ($canEdit && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "save_revealed_image") {
     [$savedOk, $saveError, $savedFilename] = saveEditableMapState(
         $_POST["imageData"] ?? "",
         $_POST["fogData"] ?? "",
         $_POST["stamps"] ?? "[]",
         $_POST["baseFile"] ?? "",
-        $_POST["fogOpacity"] ?? 85,
+        $_POST["fogOpacity"] ?? 95,
         $uploadDir
     );
 
@@ -296,7 +313,7 @@ $baseFile = null;
 $editableState = null;
 $error = null;
 
-if ($isAuthenticated && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "delete_file") {
+if ($canEdit && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "delete_file") {
     $fileToDelete = $_POST["file"] ?? "";
 
     if (isAllowedMapFile($fileToDelete, $uploadDir)) {
@@ -314,7 +331,7 @@ if ($isAuthenticated && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action
     $error = "Could not delete the selected file.";
 }
 
-if ($isAuthenticated && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "upload" && isset($_FILES["map"])) {
+if ($canEdit && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action"] ?? "") === "upload" && isset($_FILES["map"])) {
     $file = $_FILES["map"];
 
     if ($file["error"] !== UPLOAD_ERR_OK) {
@@ -340,9 +357,9 @@ if ($isAuthenticated && $_SERVER["REQUEST_METHOD"] === "POST" && ($_POST["action
     }
 }
 
-$selectableMaps = $isAuthenticated ? getSelectableMaps($uploadDir) : [];
+$selectableMaps = getSelectableMaps($uploadDir);
 
-if ($isAuthenticated) {
+if (true) {
     $requestedFile = $_GET["file"] ?? "";
 
     if (isAllowedMapFile($requestedFile, $uploadDir)) {
@@ -369,7 +386,7 @@ if ($isAuthenticated) {
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Fog of War Revealer</title>
+    <title>Map</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <style>
@@ -489,9 +506,20 @@ if ($isAuthenticated) {
             align-items: flex-start;
         }
 
-        .logout-form {
+        .logout-form,
+        .edit-login-form {
             margin-top: 0;
             flex: 0 0 auto;
+        }
+
+        .edit-login-form input[type="password"] {
+            width: 130px;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #0b0b0b;
+            color: var(--text);
+            font-size: 12px;
         }
 
         .login-page {
@@ -618,6 +646,26 @@ if ($isAuthenticated) {
             text-align: center;
         }
 
+
+        .compass-overlay {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            width: clamp(54px, 6vw, 86px);
+            height: auto;
+            opacity: 0.68;
+            pointer-events: none;
+            z-index: 1000;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.9));
+        }
+
+        .compass-overlay text {
+    	     fill: rgba(220, 40, 40, 0.95);
+    	     stroke: rgba(0, 0, 0, 0.85);
+	     stroke-width: 3px;
+	     paint-order: stroke fill;
+	     font-weight: 900;
+	}
         .save-status {
             color: var(--muted);
             font-size: 12px;
@@ -629,36 +677,27 @@ if ($isAuthenticated) {
     </style>
 </head>
 <body>
-<?php if (!$isAuthenticated): ?>
-<div class="page login-page">
-    <div class="panel login-panel">
-        <h1>Fog of War Revealer</h1>
-        <p>Enter the password to upload maps and use the reveal tools.</p>
 
-        <?php if ($loginError): ?>
-            <p class="error"><?php echo htmlspecialchars($loginError, ENT_QUOTES, "UTF-8"); ?></p>
-        <?php endif; ?>
-
-        <form method="post">
-            <input type="hidden" name="action" value="login">
-            <label for="password">Password</label>
-            <input id="password" type="password" name="password" required autofocus>
-            <button type="submit">Unlock</button>
-        </form>
-    </div>
-</div>
-<?php else: ?>
 <div class="page">
     <div class="panel">
         <div class="panel-header">
             <div>
-                <h1>Fog of War Revealer</h1>
-                <p>Upload a PNG or choose an uploaded or saved PNG, then pan, reveal, restore fog, or place custom labels on the map. Saved maps keep their editable fog state.</p>
+                <h1>Map</h1>
+                
             </div>
-            <form class="logout-form" method="post">
-                <input type="hidden" name="action" value="logout">
-                <button type="submit">Log out</button>
-            </form>
+            <?php if ($canEdit): ?>
+                <form class="logout-form" method="post">
+                    <input type="hidden" name="action" value="logout">
+                    <button type="submit">Leave edit mode</button>
+                </form>
+            <?php else: ?>
+                <form class="edit-login-form" method="post">
+                    <input type="hidden" name="action" value="login">
+                    <label for="password">Edit password</label>
+                    <input id="password" type="password" name="password" required autocomplete="current-password">
+                    <button type="submit">Edit</button>
+                </form>
+            <?php endif; ?>
         </div>
 
         <?php if ($error): ?>
@@ -666,11 +705,13 @@ if ($isAuthenticated) {
         <?php endif; ?>
 
         <div class="toolbar">
-            <form method="post" enctype="multipart/form-data">
-                <input type="hidden" name="action" value="upload">
-                <input type="file" name="map" accept="image/png" required>
-                <button type="submit">Upload</button>
-            </form>
+            <?php if ($canEdit): ?>
+                <form method="post" enctype="multipart/form-data">
+                    <input type="hidden" name="action" value="upload">
+                    <input type="file" name="map" accept="image/png" required>
+                    <button type="submit">Upload</button>
+                </form>
+            <?php endif; ?>
 
             <?php if (!empty($selectableMaps)): ?>
                 <form method="get">
@@ -687,7 +728,7 @@ if ($isAuthenticated) {
                     <noscript><button type="submit">Open</button></noscript>
                 </form>
 
-                <?php if ($selectedFile): ?>
+                <?php if ($canEdit && $selectedFile): ?>
                     <form method="post" onsubmit="return confirm('Delete this map file?');">
                         <input type="hidden" name="action" value="delete_file">
                         <input type="hidden" name="file" value="<?php echo htmlspecialchars($selectedFile, ENT_QUOTES, "UTF-8"); ?>">
@@ -697,7 +738,7 @@ if ($isAuthenticated) {
             <?php endif; ?>
         </div>
 
-        <?php if ($imagePath): ?>
+        <?php if ($imagePath && $canEdit): ?>
             <div class="toolbar">
                 <label>
                     Brush size
@@ -707,8 +748,8 @@ if ($isAuthenticated) {
 
                 <label>
                     Fog opacity
-                    <input id="fogOpacity" type="range" min="20" max="100" value="<?php echo (int)($editableState["fog_opacity"] ?? 85); ?>">
-                    <span id="fogOpacityValue"><?php echo (int)($editableState["fog_opacity"] ?? 85); ?></span>%
+                    <input id="fogOpacity" type="range" min="20" max="100" value="<?php echo (int)($editableState["fog_opacity"] ?? 95); ?>">
+                    <span id="fogOpacityValue"><?php echo (int)($editableState["fog_opacity"] ?? 95); ?></span>%
                 </label>
 
                 <span class="mode-group" aria-label="Tool mode">
@@ -726,17 +767,28 @@ if ($isAuthenticated) {
                     </label>
                     <label class="mode-button">
                         <input type="radio" name="toolMode" value="label">
-                        Label
+                        Symbol
                     </label>
                     <label class="mode-button">
                         <input type="radio" name="toolMode" value="removeLabel">
-                        Remove label
+                        Remove symbol
                     </label>
                 </span>
 
                 <label>
-                    Label
-                    <input id="labelText" type="text" maxlength="8" value="" placeholder="Up to 8 chars" autocomplete="off" spellcheck="false" style="width: 110px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: #111; color: var(--text); font-size: 12px;">
+                    Symbol
+                    <select id="labelText">
+                        <option value="↑">↑</option>
+                        <option value="↓">↓</option>
+                        <option value="←">←</option>
+                        <option value="→">→</option>
+                        <option value="&lt;--&gt;">&lt;--&gt;</option>
+                        <option value="↕">↕</option>
+                        <option value="TRAP">TRAP</option>
+                        <option value="SAFE?">SAFE?</option>
+                        <option value="X">X</option>
+                        <option value="?">?</option>
+                    </select>
                 </label>
 
                 <label>
@@ -752,12 +804,12 @@ if ($isAuthenticated) {
 
                 <label>
                     Font size
-                    <input id="stampSize" type="range" min="12" max="160" value="12">
-                    <span id="stampSizeValue">12</span>px
+                    <input id="stampSize" type="range" min="12" max="30" value="30">
+                    <span id="stampSizeValue">30</span>px
                 </label>
 
-                <button type="button" id="undoStamp">Undo label</button>
-                <button type="button" id="clearStamps">Clear labels</button>
+                <button type="button" id="undoStamp">Undo symbol</button>
+                <button type="button" id="clearStamps">Clear symbols</button>
                 <button type="button" id="resetFog">Reset fog</button>
                 <button type="button" id="clearFog">Clear all fog</button>
                 <button type="button" id="saveFog">Download revealed image</button>
@@ -775,9 +827,19 @@ if ($isAuthenticated) {
                 <canvas id="stampCanvas"></canvas>
             </div>
         </div>
+        <svg class="compass-overlay" viewBox="0 0 100 100" role="img" aria-label="Compass">
+            <text x="50" y="18" text-anchor="middle" font-size="18">N</text>
+            <text x="50" y="92" text-anchor="middle" font-size="15">S</text>
+            <text x="14" y="56" text-anchor="middle" font-size="15">W</text>
+            <text x="86" y="56" text-anchor="middle" font-size="15">E</text>
+        </svg>
     <?php else: ?>
         <div class="empty">
-            No PNG selected. Upload a PNG or choose an existing file.
+            <?php if ($canEdit): ?>
+                No PNG selected. Upload a PNG or choose an existing file.
+            <?php else: ?>
+                No PNG selected. Enter the edit password to upload a PNG.
+            <?php endif; ?>
         </div>
     <?php endif; ?>
 </div>
@@ -809,13 +871,15 @@ if ($isAuthenticated) {
     const undoStampButton = document.getElementById("undoStamp");
     const clearStampsButton = document.getElementById("clearStamps");
     const toolModeInputs = document.querySelectorAll('input[name="toolMode"]');
+    const canEdit = <?php echo json_encode($canEdit); ?>;
+    const initialFogOpacity = <?php echo json_encode((int)($editableState["fog_opacity"] ?? 95)); ?>;
     const baseFile = <?php echo json_encode($baseFile); ?>;
     const initialFogDataUrl = <?php echo json_encode($editableState["fog_data_url"] ?? null); ?>;
     const initialStamps = <?php echo json_encode($editableState["stamps"] ?? []); ?>;
 
     let drawing = false;
     let lastPoint = null;
-    let fogAlpha = Number(fogOpacity.value) / 100;
+    let fogAlpha = fogOpacity ? Number(fogOpacity.value) / 100 : Number(initialFogOpacity) / 100;
     let stamps = normalizeLabels(Array.isArray(initialStamps) ? initialStamps : []);
     let panning = false;
     let panStart = null;
@@ -1032,18 +1096,22 @@ if ($isAuthenticated) {
         const text = normalizeLabelText(labelText.value);
 
         if (!text) {
-            saveStatus.textContent = "Enter a label before placing it.";
+            if (saveStatus) {
+                saveStatus.textContent = "Choose a symbol before placing it.";
+            }
             return;
         }
 
-        saveStatus.textContent = "";
+        if (saveStatus) {
+            saveStatus.textContent = "";
+        }
 
         stamps.push({
             x: point.x,
             y: point.y,
             text: text,
-            color: labelColor.value,
-            size: Number(stampSize.value)
+            color: labelColor ? labelColor.value : "white",
+            size: stampSize ? Number(stampSize.value) : 27
         });
 
         redrawStamps();
@@ -1081,7 +1149,9 @@ if ($isAuthenticated) {
             if (isPointInsideStamp(point, stamps[i])) {
                 stamps.splice(i, 1);
                 redrawStamps();
-                saveStatus.textContent = "";
+                if (saveStatus) {
+                    saveStatus.textContent = "";
+                }
                 return true;
             }
         }
@@ -1099,7 +1169,7 @@ if ($isAuthenticated) {
     }
 
     function eraseAt(point) {
-        const size = Number(brushSize.value);
+        const size = brushSize ? Number(brushSize.value) : 60;
         const halfSize = size / 2;
 
         ctx.save();
@@ -1110,7 +1180,7 @@ if ($isAuthenticated) {
     }
 
     function restoreFogAt(point) {
-        const size = Number(brushSize.value);
+        const size = brushSize ? Number(brushSize.value) : 60;
         const halfSize = size / 2;
         const left = Math.max(0, Math.floor(point.x - halfSize));
         const top = Math.max(0, Math.floor(point.y - halfSize));
@@ -1145,7 +1215,7 @@ if ($isAuthenticated) {
         const dx = to.x - from.x;
         const dy = to.y - from.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        const spacing = Math.max(2, Number(brushSize.value) / 5);
+        const spacing = Math.max(2, (brushSize ? Number(brushSize.value) : 60) / 5);
         const steps = Math.max(1, Math.ceil(distance / spacing));
 
         for (let i = 0; i <= steps; i++) {
@@ -1294,6 +1364,10 @@ if ($isAuthenticated) {
         formData.append("baseFile", baseFile || "");
         formData.append("fogOpacity", fogOpacity.value);
 
+        if (!saveToServerButton || !saveStatus) {
+            return;
+        }
+
         saveToServerButton.disabled = true;
         saveStatus.textContent = "Saving...";
 
@@ -1325,41 +1399,55 @@ if ($isAuthenticated) {
         }
     }
 
-    brushSize.addEventListener("input", function () {
-        brushSizeValue.textContent = brushSize.value;
-    });
+    if (brushSize && brushSizeValue) {
+        brushSize.addEventListener("input", function () {
+            brushSizeValue.textContent = brushSize.value;
+        });
+    }
 
-    fogOpacity.addEventListener("input", function () {
-        const previousFogAlpha = fogAlpha;
-        const nextFogAlpha = Number(fogOpacity.value) / 100;
+    if (fogOpacity && fogOpacityValue) {
+        fogOpacity.addEventListener("input", function () {
+            const previousFogAlpha = fogAlpha;
+            const nextFogAlpha = Number(fogOpacity.value) / 100;
 
-        fogAlpha = nextFogAlpha;
-        fogOpacityValue.textContent = fogOpacity.value;
-        rescaleExistingFogOpacity(previousFogAlpha, nextFogAlpha);
-    });
+            fogAlpha = nextFogAlpha;
+            fogOpacityValue.textContent = fogOpacity.value;
+            rescaleExistingFogOpacity(previousFogAlpha, nextFogAlpha);
+        });
+    }
 
-    stampSize.addEventListener("input", function () {
-        stampSizeValue.textContent = stampSize.value;
-    });
+    if (stampSize && stampSizeValue) {
+        stampSize.addEventListener("input", function () {
+            stampSizeValue.textContent = stampSize.value;
+        });
+    }
 
-    labelText.addEventListener("input", function () {
-        const normalized = normalizeLabelText(labelText.value);
-        if (labelText.value !== normalized) {
-            labelText.value = normalized;
-        }
-        if (saveStatus.textContent === "Enter a label before placing it.") {
-            saveStatus.textContent = "";
-        }
-    });
+    if (labelText) {
+        labelText.addEventListener("input", function () {
+            const normalized = normalizeLabelText(labelText.value);
+            if (labelText.value !== normalized) {
+                labelText.value = normalized;
+            }
+            if (saveStatus && saveStatus.textContent === "Choose a symbol before placing it.") {
+                saveStatus.textContent = "";
+            }
+        });
+    }
 
-    labelColor.addEventListener("change", function () {
-        if (saveStatus.textContent === "Enter a label before placing it.") {
-            saveStatus.textContent = "";
-        }
-    });
+    if (labelColor) {
+        labelColor.addEventListener("change", function () {
+            if (saveStatus && saveStatus.textContent === "Choose a symbol before placing it.") {
+                saveStatus.textContent = "";
+            }
+        });
+    }
 
-    undoStampButton.addEventListener("click", undoStamp);
-    clearStampsButton.addEventListener("click", clearStamps);
+    if (undoStampButton) {
+        undoStampButton.addEventListener("click", undoStamp);
+    }
+    if (clearStampsButton) {
+        clearStampsButton.addEventListener("click", clearStamps);
+    }
 
     for (const input of toolModeInputs) {
         input.addEventListener("change", updatePointerBehavior);
@@ -1367,10 +1455,18 @@ if ($isAuthenticated) {
 
     updatePointerBehavior();
 
-    resetFogButton.addEventListener("click", resetFog);
-    clearFogButton.addEventListener("click", clearFog);
-    saveFogButton.addEventListener("click", downloadRevealedImage);
-    saveToServerButton.addEventListener("click", saveRenderedImageToServer);
+    if (resetFogButton) {
+        resetFogButton.addEventListener("click", resetFog);
+    }
+    if (clearFogButton) {
+        clearFogButton.addEventListener("click", clearFog);
+    }
+    if (saveFogButton) {
+        saveFogButton.addEventListener("click", downloadRevealedImage);
+    }
+    if (saveToServerButton) {
+        saveToServerButton.addEventListener("click", saveRenderedImageToServer);
+    }
 
     stampCanvas.addEventListener("pointerdown", startDrawing);
     stampCanvas.addEventListener("pointermove", draw);
@@ -1385,7 +1481,6 @@ if ($isAuthenticated) {
     }
 })();
 </script>
-<?php endif; ?>
 <?php endif; ?>
 </body>
 </html>
